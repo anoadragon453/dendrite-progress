@@ -6,8 +6,8 @@ A website to track the development progress of
 
 ## Build
 
-Simply use `go build ./...`.
+Simply use `go build`.
 
 ## Run
 
-Run `./bin/dendrite-progress`.
+Run `./dendrite-progress`.
