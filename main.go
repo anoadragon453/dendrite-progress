@@ -57,7 +57,7 @@ func getAllTests() (testnames []string, err error) {
 	log.Debug("Getting all tests")
 
 	// Check if the sytest checkout exists already
-	_, err = os.Stat(config.Git.SytestURL)
+	_, err = os.Stat(config.Git.SytestDirectory)
 	if os.IsNotExist(err) {
 		// Checkout the source
 		log.Debug("Cloning sytest...")
