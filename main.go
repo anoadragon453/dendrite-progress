@@ -61,7 +61,7 @@ func getAllTests() (testnames []string, err error) {
 	if os.IsNotExist(err) {
 		// Checkout the source
 		log.Debug("Cloning sytest...")
-		err = cloneSytest(config.Git.SytestURL, config.Git.SytestDirectory)
+		err = cloneSytest(config.Git.SytestDirectory, config.Git.SytestURL)
 		if err != nil {
 			return
 		}
