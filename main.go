@@ -1,9 +1,7 @@
-/*
-	Dendrite Progress
-	Show development progress of the matrix homeserver, Dendrite.
-
-	Andrew Morgan 2019
-*/
+// Dendrite Progress
+// Show development progress of the matrix homeserver, Dendrite.
+//
+// Andrew Morgan 2019
 
 package main
 
@@ -24,17 +22,10 @@ import (
 )
 
 var (
-	// TODO: Set up a config file
-	HTTP_PORT             = 8765
-	DENDRITE_TESTFILE_URL = "https://raw.githubusercontent.com/matrix-org/dendrite/master/testfile"
-	SYTEST_GIT_URL        = "https://github.com/matrix-org/sytest"
-	SYTEST_GIT_DIR, _     = filepath.Abs("sytest")
-	WEBHOOK_SECRET        = "xxx"
-	DATABASE_PATH         = "stats.db"
-	LOG_LEVEL             = log.DebugLevel
-
-	hook, _ = github.New(github.Options.Secret(WEBHOOK_SECRET))
+	dendriteWebhook, _ = github.New(github.Options.Secret(config.Webhook.DendriteSecret))
+	sytestWebhook, _ = github.New(github.Options.Secret(config.Webhook.SytestSecret))
 	db      *sql.DB
+	config  Config
 )
 
 // getPassingTests downloads
@@ -42,7 +33,7 @@ func getPassingTests() (testnames []string, err error) {
 	log.Debug("Getting passing tests")
 
 	// Download the latest iteration of the testfile
-	resp, err := http.Get(DENDRITE_TESTFILE_URL)
+	resp, err := http.Get(config.DendriteTestfileURL)
 	if err != nil {
 		return
 	}
@@ -66,18 +57,19 @@ func getAllTests() (testnames []string, err error) {
 	log.Debug("Getting all tests")
 
 	// Check if the sytest checkout exists already
-	_, err = os.Stat(SYTEST_GIT_DIR)
+	fmt.Println(config.Git.SytestURL)
+	_, err = os.Stat(config.Git.SytestURL)
 	if os.IsNotExist(err) {
 		// Checkout the source
 		log.Debug("Cloning sytest...")
-		err = cloneSytest(SYTEST_GIT_DIR, SYTEST_GIT_URL)
+		err = cloneSytest(config.Git.SytestURL, config.Git.SytestDirectory)
 		if err != nil {
 			return
 		}
 	} else {
 		// Make sure the checkout is up-to-date
 		log.Debug("Updating sytest checkout...")
-		err = pullSytest(SYTEST_GIT_DIR)
+		err = pullSytest(config.Git.SytestDirectory)
 		if err != nil {
 			return
 		}
@@ -87,12 +79,15 @@ func getAllTests() (testnames []string, err error) {
 
 	// Read through all test files and check for test names
 	testfilePaths := []string{}
-	err = filepath.Walk(SYTEST_GIT_DIR+"/tests", func(path string, f os.FileInfo, err error) error {
-		if !f.IsDir() {
-			testfilePaths = append(testfilePaths, path)
-		}
-		return nil
-	})
+	err = filepath.Walk(
+		config.Git.SytestDirectory+"/tests",
+		func(path string, f os.FileInfo, err error) error {
+			if !f.IsDir() {
+				testfilePaths = append(testfilePaths, path)
+			}
+			return nil
+		},
+	)
 	if err != nil {
 		return
 	}
@@ -157,11 +152,11 @@ func refreshTotalTests() (err error) {
 	return
 }
 
-// handleDendriteWebhook is a http.Handler function that listens for webhook events sent
-// from Dendrite every time a commit occurs
+// handleDendriteWebhook is a http.Handler function that listens for webhook
+// events sent from Dendrite every time a commit occurs
 func handleDendriteWebhook(w http.ResponseWriter, req *http.Request) {
 	// Ensure this is an authenticated webhook request
-	payload, err := hook.Parse(req, github.PushEvent)
+	payload, err := dendriteWebhook.Parse(req, github.PushEvent)
 	if err != nil {
 		log.Error("[dendrite webhook handler] %s", err)
 		return
@@ -173,15 +168,18 @@ func handleDendriteWebhook(w http.ResponseWriter, req *http.Request) {
 		// Refresh data on every push event
 		refreshPassingTests()
 	default:
-		log.Debug("[dendrite webhook handler] Unhandled webhook request type: %s", payload)
+		log.Debug(
+			"[dendrite webhook handler] Unhandled webhook request type: %s",
+			payload,
+		)
 	}
 }
 
-// handleSytestWebhook is a http.Handler function that listens for webhook events sent
-// from Sytest every time a commit occurs
+// handleSytestWebhook is a http.Handler function that listens for webhook
+// events sent from Sytest every time a commit occurs
 func handleSytestWebhook(w http.ResponseWriter, req *http.Request) {
 	// Ensure this is an authenticated webhook request
-	payload, err := hook.Parse(req, github.PushEvent)
+	payload, err := sytestWebhook.Parse(req, github.PushEvent)
 	if err != nil {
 		log.Error("[sytest webhook handler] %s", err)
 		return
@@ -193,7 +191,10 @@ func handleSytestWebhook(w http.ResponseWriter, req *http.Request) {
 		// Refresh data on every push event
 		refreshTotalTests()
 	default:
-		log.Debug("[sytest webhook handler] Unhandled webhook request type: %s", payload)
+		log.Debug(
+			"[sytest webhook handler] Unhandled webhook request type: %s",
+			payload,
+		)
 	}
 }
 
@@ -201,19 +202,19 @@ func handleSytestWebhook(w http.ResponseWriter, req *http.Request) {
 // correct tables exist
 func setupDB() {
 	var err error
-	db, err = sql.Open("sqlite3", DATABASE_PATH)
+	db, err = sql.Open("sqlite3", config.DB.Path)
 	if err != nil {
-		log.Fatalf("Unable to open database file %s: %q\n", DATABASE_PATH, err)
+		log.Fatalf("Unable to open database file %s: %q\n", config.DB.Path, err)
 	}
 
 	err = createTableAllTests(db)
 	if err != nil {
-		log.Fatalf("Issue creating all tests database table: %q", err)
+		log.Fatalf("Issue creating all tests database table: %q\n", err)
 	}
 
 	err = createTablePassingTests(db)
 	if err != nil {
-		log.Fatalf("Issue creating passing tests database table: %q", err)
+		log.Fatalf("Issue creating passing tests database table: %q\n", err)
 	}
 
 	// Pull latest changes from the db
@@ -224,7 +225,14 @@ func setupDB() {
 }
 
 func main() {
-	log.SetLevel(LOG_LEVEL)
+	// Load the config file
+	var err error
+	config, err = loadConfig(); 
+	if err != nil {
+		fmt.Printf("Error loading config file: %q\n", err)
+		return
+	}
+	log.SetLevel(config.LogLevel)
 
 	// Create database connection and tables
 	setupDB()
@@ -237,6 +245,6 @@ func main() {
 	http.Handle("/metrics", serveMetrics())
 
 	// Start the HTTP server
-	port := fmt.Sprintf(":%d", HTTP_PORT)
+	port := fmt.Sprintf(":%d", config.HTTP.Port)
 	log.Fatal(http.ListenAndServe(port, nil))
 }

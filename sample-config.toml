@@ -1,0 +1,27 @@
+# Logging level.
+# Possible values are "panic", "fatal", "debug", "error", "warn", "info"
+log_level = "debug"
+
+# The URL to Dendrite's testfile
+dendrite_testfile_url = "https://raw.githubusercontent.com/matrix-org/dendrite/master/testfile"
+
+[http]
+# The port prometheus metrics will be served on
+port = 8765
+
+[git]
+# Sytest's repository URL
+sytest_url = "https://github.com/matrix-org/sytest"
+
+# Directory to save the Sytest codebase to
+sytest_directory = "sytest"
+
+[webhook]
+# The webhook secret for Dendrite's repository
+dendrite_secret = "xxx"
+# The webhook secret for Sytest's repository
+sytest_secret = "yyy"
+
+[database]
+# The location to save the database file to
+path = "stats.db"

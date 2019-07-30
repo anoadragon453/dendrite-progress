@@ -1,6 +1,7 @@
 module github.com/anoadragon453/dendrite-progress
 
 require (
+	github.com/BurntSushi/toml v0.3.1
 	github.com/gliderlabs/ssh v0.2.2 // indirect
 	github.com/google/go-cmp v0.3.0 // indirect
 	github.com/kevinburke/ssh_config v0.0.0-20190725054713-01f96b0aa0cd // indirect
