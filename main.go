@@ -57,7 +57,6 @@ func getAllTests() (testnames []string, err error) {
 	log.Debug("Getting all tests")
 
 	// Check if the sytest checkout exists already
-	fmt.Println(config.Git.SytestURL)
 	_, err = os.Stat(config.Git.SytestURL)
 	if os.IsNotExist(err) {
 		// Checkout the source
