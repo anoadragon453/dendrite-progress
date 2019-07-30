@@ -1,4 +1,4 @@
-/* 
+/*
 	Dendrite Progress
 	Show development progress of the matrix homeserver, Dendrite.
 
@@ -9,15 +9,13 @@ package main
 
 import (
 	"database/sql"
-	"net/http"
-	"path/filepath"
-	"io"
-	"io/ioutil"
-	"os/exec"
-	"os"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
-	
+
 	log "github.com/sirupsen/logrus"
 	"gopkg.in/go-playground/webhooks.v5/github"
 
@@ -27,20 +25,22 @@ import (
 
 var (
 	// TODO: Set up a config file
-	HTTP_PORT = 8765
+	HTTP_PORT             = 8765
 	DENDRITE_TESTFILE_URL = "https://raw.githubusercontent.com/matrix-org/dendrite/master/testfile"
-	SYTEST_GIT_URL = "https://github.com/matrix-org/sytest"
-	SYTEST_GIT_DIR, _ = filepath.Abs("sytest")
-	WEBHOOK_SECRET = "xxx"
-	DATABASE_PATH = "stats.db"
+	SYTEST_GIT_URL        = "https://github.com/matrix-org/sytest"
+	SYTEST_GIT_DIR, _     = filepath.Abs("sytest")
+	WEBHOOK_SECRET        = "xxx"
+	DATABASE_PATH         = "stats.db"
+	LOG_LEVEL             = log.DebugLevel
 
 	hook, _ = github.New(github.Options.Secret(WEBHOOK_SECRET))
-	db *sql.DB
+	db      *sql.DB
 )
 
 // getPassingTests downloads
 func getPassingTests() (testnames []string, err error) {
 	log.Debug("Getting passing tests")
+
 	// Download the latest iteration of the testfile
 	resp, err := http.Get(DENDRITE_TESTFILE_URL)
 	if err != nil {
@@ -68,41 +68,38 @@ func getAllTests() (testnames []string, err error) {
 	// Check if the sytest checkout exists already
 	_, err = os.Stat(SYTEST_GIT_DIR)
 	if os.IsNotExist(err) {
-		log.Debug("Cloning sytest...")
-
 		// Checkout the source
-		cmd := exec.Command(
-			fmt.Sprintf("git clone %s %s", SYTEST_GIT_URL, SYTEST_GIT_DIR),
-		)
-		err = cmd.Run()
+		log.Debug("Cloning sytest...")
+		err = cloneSytest(SYTEST_GIT_DIR, SYTEST_GIT_URL)
 		if err != nil {
 			return
 		}
 	} else {
-		log.Debug("Updating sytest checkout...")
-
 		// Make sure the checkout is up-to-date
-		cmd := exec.Command(
-			fmt.Sprintf(`git -C "%s" pull`, SYTEST_GIT_DIR), os.Getenv("PATH"),
-		)
-		err = cmd.Run()
+		log.Debug("Updating sytest checkout...")
+		err = pullSytest(SYTEST_GIT_DIR)
 		if err != nil {
 			return
 		}
 	}
 
-	log.Debug("Sytest checkout updated...")
+	log.Debug("Sytest checkout updated.")
 
 	// Read through all test files and check for test names
-	testfilePaths, err := ioutil.ReadDir(SYTEST_GIT_DIR + "/tests")
+	testfilePaths := []string{}
+	err = filepath.Walk(SYTEST_GIT_DIR+"/tests", func(path string, f os.FileInfo, err error) error {
+		if !f.IsDir() {
+			testfilePaths = append(testfilePaths, path)
+		}
+		return nil
+	})
 	if err != nil {
 		return
 	}
-	log.Debug("Got testfilePaths: %s", testfilePaths)
 
 	testnames = make([]string, 1000)
-	for _, testfilePathInfo := range testfilePaths {
-		testfile, err := os.Open(testfilePathInfo.Name())
+	for _, testfilePath := range testfilePaths {
+		testfile, err := os.Open(testfilePath)
 		if err != nil {
 			return make([]string, 0, 0), err
 		}
@@ -112,32 +109,40 @@ func getAllTests() (testnames []string, err error) {
 		if err != nil {
 			return make([]string, 0, 0), err
 		}
-		testfileLines:= strings.Split(string(testfileContent), "\n")
+		testfileLines := strings.Split(string(testfileContent), "\n")
 
 		for _, line := range testfileLines {
 			if strings.HasPrefix(line, "test \"") {
-				testname := line[6:len(line)-1]
+				testname := line[6 : len(line)-1]
 				testnames = append(testnames, testname)
 			}
 		}
 	}
-	log.Debugf("Got all count: %d", len(testnames))
+	log.Debugf("Got total test count: %d", len(testnames))
 
 	return
 }
 
-// refreshProgressData kicks off a refresh off all statistical data sources
-func refreshProgressData() (err error) {
+// refreshPassingTests is a function that retrieves the number of tests that
+// Dendrite passes and saves the count to the database and prometheus metrics
+func refreshPassingTests() (err error) {
 	// Save passing tests
 	passingTests, err := getPassingTests()
 	if err != nil {
 		return
 	}
-	err = storeTests(db, passingTests, "all_tests")
+	err = storeTests(db, passingTests, "passing_tests")
 	if err != nil {
 		return
 	}
+	setPassingTests(len(passingTests))
 
+	return
+}
+
+// refreshTotalTests is a function that retrieves the total number of tests and
+// saves the count to the database and prometheus metrics
+func refreshTotalTests() (err error) {
 	// Save all tests
 	allTests, err := getAllTests()
 	if err != nil {
@@ -147,17 +152,18 @@ func refreshProgressData() (err error) {
 	if err != nil {
 		return
 	}
+	setTotalTests(len(allTests))
 
 	return
 }
 
-// handleWebhook is a http.Handler function that listens for webhook events sent
-// from Github every time a commit occurs
-func handleWebhook(w http.ResponseWriter, req *http.Request) {
+// handleDendriteWebhook is a http.Handler function that listens for webhook events sent
+// from Dendrite every time a commit occurs
+func handleDendriteWebhook(w http.ResponseWriter, req *http.Request) {
 	// Ensure this is an authenticated webhook request
 	payload, err := hook.Parse(req, github.PushEvent)
 	if err != nil {
-		log.Error("[webhook handler] %s", err)
+		log.Error("[dendrite webhook handler] %s", err)
 		return
 	}
 
@@ -165,26 +171,30 @@ func handleWebhook(w http.ResponseWriter, req *http.Request) {
 	switch payload.(type) {
 	case github.PushPayload:
 		// Refresh data on every push event
-		refreshProgressData()
+		refreshPassingTests()
 	default:
-		log.Info("[webhook handler] Unhandled webhook request type: %s", payload)
+		log.Debug("[dendrite webhook handler] Unhandled webhook request type: %s", payload)
 	}
 }
 
-// serveStats is a http.Handler function that serves a templated webpage of
-// statistics
-func serveStats(w http.ResponseWriter, req *http.Request) {
-	// Retrieve data from DB
-	allTests, err := getTests(db, "all_tests")
+// handleSytestWebhook is a http.Handler function that listens for webhook events sent
+// from Sytest every time a commit occurs
+func handleSytestWebhook(w http.ResponseWriter, req *http.Request) {
+	// Ensure this is an authenticated webhook request
+	payload, err := hook.Parse(req, github.PushEvent)
 	if err != nil {
-		log.Fatalf("Error retrieving all tests: %q", err)
-	}
-	passingTests, err := getTests(db, "passing_tests")
-	if err != nil {
-		log.Fatalf("Error retrieving passing tests: %q", err)
+		log.Error("[sytest webhook handler] %s", err)
+		return
 	}
 
-	io.WriteString(w, fmt.Sprintf("%d/%d", len(allTests), len(passingTests)))
+	// Act according to the payload type
+	switch payload.(type) {
+	case github.PushPayload:
+		// Refresh data on every push event
+		refreshTotalTests()
+	default:
+		log.Debug("[sytest webhook handler] Unhandled webhook request type: %s", payload)
+	}
 }
 
 // setupDB is a function that opens a connection to the database and ensures the
@@ -205,27 +215,26 @@ func setupDB() {
 	if err != nil {
 		log.Fatalf("Issue creating passing tests database table: %q", err)
 	}
-}
 
-func boop(w http.ResponseWriter, req *http.Request) {
-	err := refreshProgressData()
-	if err != nil {
-		log.Errorf("Error updating progress data: %q", err)
-	}
+	// Pull latest changes from the db
+	log.Debug("Retrieving latest changes...")
+	refreshPassingTests()
+	refreshTotalTests()
+	log.Debug("Done retrieving latest changes.")
 }
 
 func main() {
-	log.SetLevel(log.DebugLevel)
+	log.SetLevel(LOG_LEVEL)
+
 	// Create database connection and tables
 	setupDB()
 
-	// Serve statistics at root
-	http.HandleFunc("/", serveStats)
-
-	http.HandleFunc("/boop", boop)
-
 	// Listen for webhook requests
-	http.HandleFunc("/webhook", handleWebhook)
+	http.HandleFunc("/dendrite-webhook", handleDendriteWebhook)
+	http.HandleFunc("/sytest-webhook", handleSytestWebhook)
+
+	// Listen for prometheus metrics request
+	http.Handle("/metrics", serveMetrics())
 
 	// Start the HTTP server
 	port := fmt.Sprintf(":%d", HTTP_PORT)
