@@ -218,8 +218,12 @@ func setupDB() {
 
 	// Pull latest changes from the db
 	log.Debug("Retrieving latest changes...")
-	refreshPassingTests()
-	refreshTotalTests()
+	if err = refreshPassingTests(); err != nil {
+		log.Fatalf("Issue updating Dendrite tests: %q\n", err)
+	}
+	if err = refreshTotalTests(); err != nil {
+		log.Fatalf("Issue updating total tests: %q\n", err)
+	}
 	log.Debug("Done retrieving latest changes.")
 }
 
