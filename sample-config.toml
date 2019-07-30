@@ -7,7 +7,7 @@ dendrite_testfile_url = "https://raw.githubusercontent.com/matrix-org/dendrite/m
 
 [http]
 # The port prometheus metrics will be served on
-port = 8765
+port = 8777
 
 [git]
 # Sytest's repository URL
